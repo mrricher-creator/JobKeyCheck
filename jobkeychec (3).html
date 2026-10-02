@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>JobKeyCheck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<style>
+  :root{
+    --ink:#1E2430; --bg:#F7F8FA; --card:#FFFFFF; --line:#E1E4EA;
+    --blue:#2F5EA8; --green:#2F8F5F; --amber:#1E6FB8; --muted:#6B7280;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:'Inter',sans-serif;
+    padding-top:env(safe-area-inset-top,0px);
+    padding-bottom:env(safe-area-inset-bottom,0px);
+  }
+  .wrap{max-width:860px;margin:0 auto;padding:40px 20px 70px;}
+  h1{font-family:'Space Grotesk',sans-serif;font-size:1.8rem;margin:0 0 6px;}
+  .sub{color:var(--muted);margin:0 0 28px;font-size:0.95rem;}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media(max-width:640px){.grid{grid-template-columns:1fr;}}
+  label{font-weight:600;font-size:0.85rem;display:block;margin-bottom:6px;}
+  textarea{
+    width:100%;min-height:200px;padding:12px;border:1px solid var(--line);
+    border-radius:8px;font-family:inherit;font-size:0.9rem;resize:vertical;background:var(--card);
+  }
+  button{
+    margin-top:20px;padding:13px 22px;background:var(--blue);color:#fff;border:none;
+    border-radius:8px;font-size:1rem;font-weight:600;cursor:pointer;
+  }
+  button:disabled{opacity:0.5;cursor:not-allowed;}
+  .result{margin-top:32px;display:none;}
+  .warn{background:#FBEEE0;border:1px solid #E6C78C;color:#8A5A1E;padding:12px 14px;border-radius:8px;font-size:0.88rem;margin-bottom:20px;}
+  .score-row{display:flex;align-items:baseline;gap:12px;margin-bottom:18px;}
+  .score{font-family:'Space Grotesk',sans-serif;font-size:3rem;font-weight:700;}
+  .score-label{color:var(--muted);font-size:0.95rem;}
+  .bar{height:10px;background:var(--line);border-radius:5px;overflow:hidden;margin-bottom:28px;}
+  .bar-fill{height:100%;background:var(--blue);transition:width 0.4s ease;}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:24px;}
+  @media(max-width:640px){.cols{grid-template-columns:1fr;}}
+  .col h3{font-size:0.95rem;margin:0 0 10px;}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;}
+  .chip{padding:5px 12px;border-radius:14px;font-size:0.85rem;}
+  .chip.found{background:#E7F4EC;color:var(--green);}
+  .chip.missing{background:#E7F0FA;color:var(--amber);}
+  .empty{color:var(--muted);font-size:0.85rem;}
+  .upload-row{display:flex;align-items:center;gap:10px;margin:8px 0 10px;}
+  .upload-btn{
+    display:inline-block;padding:7px 14px;background:var(--card);color:var(--blue);
+    border:1px solid var(--blue);border-radius:6px;font-size:0.82rem;font-weight:600;
+    cursor:pointer;white-space:nowrap;
+  }
+  .upload-btn input{display:none;}
+  .upload-status{font-size:0.8rem;color:var(--muted);}
+  .upload-status.err{color:#B5533C;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>JobKeyCheck</h1>
+  <p class="sub">Paste your resume and a job posting. We'll show your keyword match score and what's missing.</p>
+
+  <div class="grid">
+    <div>
+      <label for="resume">Your resume</label>
+      <div class="upload-row">
+        <label class="upload-btn">Upload file (PDF, DOCX, TXT)
+          <input type="file" id="resumeFile" accept=".pdf,.docx,.txt">
+        </label>
+        <span class="upload-status" id="resumeStatus"></span>
+      </div>
+      <textarea id="resume" placeholder="...or paste your resume text here"></textarea>
+    </div>
+    <div>
+      <label for="jd">Job description</label>
+      <div class="upload-row">
+        <label class="upload-btn">Upload file (PDF, DOCX, TXT)
+          <input type="file" id="jdFile" accept=".pdf,.docx,.txt">
+        </label>
+        <span class="upload-status" id="jdStatus"></span>
+      </div>
+      <textarea id="jd" placeholder="...or paste the job posting here"></textarea>
+    </div>
+  </div>
+
+  <button id="checkBtn">Check match</button>
+
+  <div class="result" id="result">
+    <div class="warn" id="lowConfidenceWarning" style="display:none;"></div>
+    <div class="score-row">
+      <div class="score" id="scoreNum">0%</div>
+      <div class="score-label">keyword match</div>
+    </div>
+    <div class="bar"><div class="bar-fill" id="barFill" style="width:0%"></div></div>
+    <div class="cols">
+      <div class="col">
+        <h3>✓ Found in your resume</h3>
+        <div class="chips" id="foundChips"></div>
+      </div>
+      <div class="col">
+        <h3>Missing — consider adding</h3>
+        <div class="chips" id="missingChips"></div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:50px;padding-top:20px;border-top:1px solid var(--line);font-size:0.8rem;color:var(--muted);text-align:center;">
+    Built by JobKeyCheck · <a href="#" style="color:var(--blue);">follow for more free job tools</a>
+  </div>
+</div>
+
+<script>
+const STOPWORDS = new Set(("the a an and or but if then so to of in on at by for with without from into "+
+"is are was were be been being this that these those as it its it's you your we our they their he she his her "+
+"will would can could should must may might shall not no nor do does did doing have has had having not only also "+
+"such than too very just about above below over under again further once here there when where why how all any "+
+"both each few more most other some same up down out off"+
+" job role company team work experience years required requirements responsibilities include including skills "+
+"ability strong working help new us etc looking seeking candidate candidates apply application position").split(/\s+/));
+
+function clean(text){
+  return text.toLowerCase().replace(/[^a-z0-9+#\s]/g,' ').replace(/\s+/g,' ').trim();
+}
+
+function extractTerms(jdText){
+  const words = clean(jdText).split(' ').filter(w => w.length > 2 && !STOPWORDS.has(w) && isNaN(w));
+  const freq = {};
+  words.forEach(w => freq[w] = (freq[w]||0)+1);
+
+  // bigrams
+  const bigramFreq = {};
+  for (let i=0;i<words.length-1;i++){
+    const bg = words[i]+' '+words[i+1];
+    bigramFreq[bg] = (bigramFreq[bg]||0)+1;
+  }
+
+  const bigrams = Object.entries(bigramFreq).filter(([k,v])=>v>=2).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([k])=>k);
+  const usedWords = new Set(bigrams.join(' ').split(' '));
+  const unigrams = Object.entries(freq)
+    .filter(([w]) => !usedWords.has(w))
+    .sort((a,b)=>b[1]-a[1])
+    .slice(0, 22 - bigrams.length)
+    .map(([w])=>w);
+
+  return [...bigrams, ...unigrams];
+}
+
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
+async function extractFileText(file){
+  const name = file.name.toLowerCase();
+  const buffer = await file.arrayBuffer();
+
+  if (name.endsWith('.txt')){
+    return new TextDecoder('utf-8').decode(buffer);
+  }
+
+  if (name.endsWith('.pdf')){
+    const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+    let text = '';
+    for (let i = 1; i <= pdf.numPages; i++){
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      text += content.items.map(it => it.str).join(' ') + '\n';
+    }
+    return text;
+  }
+
+  if (name.endsWith('.docx')){
+    const result = await mammoth.extractRawText({ arrayBuffer: buffer });
+    return result.value;
+  }
+
+  throw new Error('Unsupported file type');
+}
+
+function wireUpload(fileInputId, textareaId, statusId){
+  document.getElementById(fileInputId).addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    const statusEl = document.getElementById(statusId);
+    if (!file) return;
+
+    statusEl.textContent = 'Reading ' + file.name + '…';
+    statusEl.className = 'upload-status';
+
+    try {
+      const text = await extractFileText(file);
+      if (!text.trim()){
+        statusEl.textContent = 'Could not find text in that file — try pasting instead.';
+        statusEl.className = 'upload-status err';
+        return;
+      }
+      document.getElementById(textareaId).value = text.trim();
+      statusEl.textContent = 'Loaded ' + file.name;
+    } catch (err) {
+      statusEl.textContent = 'Could not read that file (PDF, DOCX, or TXT only).';
+      statusEl.className = 'upload-status err';
+    }
+  });
+}
+
+wireUpload('resumeFile', 'resume', 'resumeStatus');
+wireUpload('jdFile', 'jd', 'jdStatus');
+
+document.getElementById('checkBtn').addEventListener('click', () => {
+  const resume = clean(document.getElementById('resume').value);
+  const jd = document.getElementById('jd').value;
+
+  if (!resume || !jd.trim()){
+    alert('Paste both your resume and the job description first.');
+    return;
+  }
+
+  const terms = extractTerms(jd);
+  const found = terms.filter(t => resume.includes(t));
+  const missing = terms.filter(t => !resume.includes(t));
+  const pct = terms.length ? Math.round((found.length/terms.length)*100) : 0;
+
+  const MIN_RELIABLE_TERMS = 6;
+  const warnEl = document.getElementById('lowConfidenceWarning');
+  if (terms.length < MIN_RELIABLE_TERMS){
+    warnEl.style.display = 'block';
+    warnEl.textContent = `⚠️ This job description only had ${terms.length} distinct keyword${terms.length===1?'':'s'} to check — that's too few for a reliable score. Paste the full job posting (not just the title or a short line) for an accurate result.`;
+  } else {
+    warnEl.style.display = 'none';
+  }
+
+  document.getElementById('result').style.display = 'block';
+  document.getElementById('scoreNum').textContent = pct + '%';
+  document.getElementById('barFill').style.width = pct + '%';
+
+  const foundBox = document.getElementById('foundChips');
+  const missingBox = document.getElementById('missingChips');
+  foundBox.innerHTML = found.length ? found.map(t=>`<span class="chip found">${t}</span>`).join('') : '<span class="empty">No strong matches found.</span>';
+  missingBox.innerHTML = missing.length ? missing.map(t=>`<span class="chip missing">${t}</span>`).join('') : '<span class="empty">Great — nothing major missing!</span>';
+
+  document.getElementById('result').scrollIntoView({behavior:'smooth', block:'nearest'});
+});
+</script>
+</body>
+</html>
