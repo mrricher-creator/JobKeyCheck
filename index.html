@@ -46,6 +46,22 @@
   .cols{display:grid;grid-template-columns:1fr 1fr;gap:24px;}
   @media(max-width:640px){.cols{grid-template-columns:1fr;}}
   .col h3{font-size:0.95rem;margin:0 0 10px;}
+  .section-block{margin-bottom:30px;}
+  .section-block h4{font-size:0.8rem;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin:0 0 14px;}
+  .section-block.required h4{color:var(--ink);font-weight:700;}
+  .suggestions{display:flex;flex-direction:column;gap:10px;}
+  .suggestion{
+    background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px;
+    font-size:0.85rem;display:flex;justify-content:space-between;gap:10px;align-items:flex-start;
+  }
+  .suggestion .txt{flex:1;}
+  .suggestion .kw{font-weight:700;color:var(--blue);}
+  .suggestion .placeholder{color:var(--muted);font-style:italic;}
+  .copy-btn{
+    border:1px solid var(--line);background:var(--card);border-radius:6px;
+    font-size:0.75rem;padding:4px 10px;cursor:pointer;white-space:nowrap;color:var(--muted);
+  }
+  .copy-btn:hover{border-color:var(--blue);color:var(--blue);}
   .chips{display:flex;flex-wrap:wrap;gap:8px;}
   .chip{padding:5px 12px;border-radius:14px;font-size:0.85rem;}
   .chip.found{background:#E7F4EC;color:var(--green);}
@@ -96,19 +112,10 @@
     <div class="warn" id="lowConfidenceWarning" style="display:none;"></div>
     <div class="score-row">
       <div class="score" id="scoreNum">0%</div>
-      <div class="score-label">keyword match</div>
+      <div class="score-label">keyword overlap</div>
     </div>
     <div class="bar"><div class="bar-fill" id="barFill" style="width:0%"></div></div>
-    <div class="cols">
-      <div class="col">
-        <h3>✓ Found in your resume</h3>
-        <div class="chips" id="foundChips"></div>
-      </div>
-      <div class="col">
-        <h3>Missing — consider adding</h3>
-        <div class="chips" id="missingChips"></div>
-      </div>
-    </div>
+    <div id="resultSections"></div>
   </div>
 
   <div style="margin-top:50px;padding-top:20px;border-top:1px solid var(--line);font-size:0.8rem;color:var(--muted);text-align:center;">
@@ -127,6 +134,47 @@ const STOPWORDS = new Set(("the a an and or but if then so to of in on at by for
 
 function clean(text){
   return text.toLowerCase().replace(/[^a-z0-9+#\s]/g,' ').replace(/\s+/g,' ').trim();
+}
+
+const REQ_HEADER = /^(requirements?|qualifications?|required skills?|minimum qualifications?|basic qualifications?|what you.?ll need|who you are|must haves?|skills( needed)?)\s*:?\s*$/i;
+const END_HEADER = /^(responsibilities|about (the )?(company|us|role)|benefits|perks|what we offer|nice to have|preferred( qualifications)?|compensation|salary|how to apply|about you|why join|company overview|culture)\s*:?\s*$/i;
+
+function splitRequirements(jdRaw){
+  const lines = jdRaw.split(/\n/);
+  let startIdx = -1, endIdx = lines.length;
+  for (let i=0;i<lines.length;i++){
+    if (REQ_HEADER.test(lines[i].trim())){ startIdx = i; break; }
+  }
+  if (startIdx === -1) return { required: '', general: jdRaw };
+
+  for (let j=startIdx+1;j<lines.length;j++){
+    if (END_HEADER.test(lines[j].trim())){ endIdx = j; break; }
+  }
+
+  const requiredLines = lines.slice(startIdx+1, endIdx);
+  const generalLines = [...lines.slice(0,startIdx), ...lines.slice(endIdx)];
+  return { required: requiredLines.join('\n'), general: generalLines.join('\n') };
+}
+
+const BULLET_TEMPLATES = [
+  (kw) => `Leveraged <span class="kw">${kw}</span> to drive <span class="placeholder">[specific result, e.g. a % improvement]</span>.`,
+  (kw) => `Applied <span class="kw">${kw}</span> to improve <span class="placeholder">[a process or team outcome]</span>.`,
+  (kw) => `Collaborated cross-functionally using <span class="kw">${kw}</span> to achieve <span class="placeholder">[a project goal]</span>.`,
+  (kw) => `Utilized <span class="kw">${kw}</span> to support <span class="placeholder">[a specific project]</span>, resulting in <span class="placeholder">[a measurable outcome]</span>.`,
+  (kw) => `Demonstrated strong <span class="kw">${kw}</span> skills while <span class="placeholder">[a responsibility you actually had]</span>.`
+];
+
+function buildSuggestion(kw, idx){
+  const template = BULLET_TEMPLATES[idx % BULLET_TEMPLATES.length];
+  return template(kw);
+}
+
+function extractRequiredTerms(text){
+  const words = clean(text).split(' ').filter(w => w.length > 2 && !STOPWORDS.has(w) && isNaN(w));
+  const seen = new Set();
+  const ordered = [];
+  words.forEach(w => { if (!seen.has(w)){ seen.add(w); ordered.push(w); } });
+  return ordered.slice(0, 15);
 }
 
 function extractTerms(jdText){
@@ -211,6 +259,19 @@ function wireUpload(fileInputId, textareaId, statusId){
 wireUpload('resumeFile', 'resume', 'resumeStatus');
 wireUpload('jdFile', 'jd', 'jdStatus');
 
+document.getElementById('resultSections').addEventListener('click', (e) => {
+  if (e.target.classList.contains('copy-btn')){
+    const text = e.target.getAttribute('data-text');
+    navigator.clipboard.writeText(text).then(() => {
+      const original = e.target.textContent;
+      e.target.textContent = 'Copied!';
+      setTimeout(() => { e.target.textContent = original; }, 1500);
+    }).catch(() => {
+      alert('Could not copy automatically — select and copy the text manually.');
+    });
+  }
+});
+
 document.getElementById('checkBtn').addEventListener('click', () => {
   const resume = clean(document.getElementById('resume').value);
   const jd = document.getElementById('jd').value;
@@ -220,16 +281,32 @@ document.getElementById('checkBtn').addEventListener('click', () => {
     return;
   }
 
-  const terms = extractTerms(jd);
-  const found = terms.filter(t => resume.includes(t));
-  const missing = terms.filter(t => !resume.includes(t));
-  const pct = terms.length ? Math.round((found.length/terms.length)*100) : 0;
+  const { required: requiredText, general: generalText } = splitRequirements(jd);
+  const requiredTerms = requiredText ? extractRequiredTerms(requiredText) : [];
+  const reqSet = new Set(requiredTerms);
+  const generalTermsRaw = extractTerms(generalText || jd);
+  const generalTerms = generalTermsRaw.filter(t => !reqSet.has(t));
+
+  const reqFound = requiredTerms.filter(t => resume.includes(t));
+  const reqMissing = requiredTerms.filter(t => !resume.includes(t));
+  const genFound = generalTerms.filter(t => resume.includes(t));
+  const genMissing = generalTerms.filter(t => !resume.includes(t));
+
+  const totalTerms = requiredTerms.length + generalTerms.length;
+  let pct;
+  if (requiredTerms.length){
+    const reqPct = reqFound.length/requiredTerms.length;
+    const genPct = generalTerms.length ? genFound.length/generalTerms.length : reqPct;
+    pct = Math.round((reqPct*0.7 + genPct*0.3)*100);
+  } else {
+    pct = generalTerms.length ? Math.round((genFound.length/generalTerms.length)*100) : 0;
+  }
 
   const MIN_RELIABLE_TERMS = 6;
   const warnEl = document.getElementById('lowConfidenceWarning');
-  if (terms.length < MIN_RELIABLE_TERMS){
+  if (totalTerms < MIN_RELIABLE_TERMS){
     warnEl.style.display = 'block';
-    warnEl.textContent = `⚠️ This job description only had ${terms.length} distinct keyword${terms.length===1?'':'s'} to check — that's too few for a reliable score. Paste the full job posting (not just the title or a short line) for an accurate result.`;
+    warnEl.textContent = `⚠️ This job description only had ${totalTerms} distinct keyword${totalTerms===1?'':'s'} to check — that's too few for a reliable score. Paste the full job posting (not just the title or a short line) for an accurate result.`;
   } else {
     warnEl.style.display = 'none';
   }
@@ -238,11 +315,46 @@ document.getElementById('checkBtn').addEventListener('click', () => {
   document.getElementById('scoreNum').textContent = pct + '%';
   document.getElementById('barFill').style.width = pct + '%';
 
-  const foundBox = document.getElementById('foundChips');
-  const missingBox = document.getElementById('missingChips');
-  foundBox.innerHTML = found.length ? found.map(t=>`<span class="chip found">${t}</span>`).join('') : '<span class="empty">No strong matches found.</span>';
-  missingBox.innerHTML = missing.length ? missing.map(t=>`<span class="chip missing">${t}</span>`).join('') : '<span class="empty">Great — nothing major missing!</span>';
+  const chipRow = (list, cls, emptyMsg) =>
+    list.length ? list.map(t=>`<span class="chip ${cls}">${t}</span>`).join('') : `<span class="empty">${emptyMsg}</span>`;
 
+  let html = '';
+  if (requiredTerms.length){
+    html += `
+      <div class="section-block required">
+        <h4>🔑 Required skills — found in your resume</h4>
+        <div class="chips">${chipRow(reqFound,'found','None found yet.')}</div>
+      </div>
+      <div class="section-block required">
+        <h4>Required skills — missing</h4>
+        <div class="chips">${chipRow(reqMissing,'missing','Nothing missing — great!')}</div>
+      </div>`;
+
+    if (reqMissing.length){
+      html += `
+        <div class="section-block required">
+          <h4>💡 How to add these — example phrasing (edit before using)</h4>
+          <div class="suggestions">
+            ${reqMissing.map((kw,i) => `
+              <div class="suggestion">
+                <div class="txt">${buildSuggestion(kw,i)}</div>
+                <button class="copy-btn" data-text="${buildSuggestion(kw,i).replace(/<[^>]+>/g,'').replace(/"/g,'&quot;')}">Copy</button>
+              </div>`).join('')}
+          </div>
+        </div>`;
+    }
+  }
+  html += `
+    <div class="section-block">
+      <h4>${requiredTerms.length ? 'Other keywords mentioned — found' : 'Keywords mentioned — found'}</h4>
+      <div class="chips">${chipRow(genFound,'found','No strong matches found.')}</div>
+    </div>
+    <div class="section-block">
+      <h4>${requiredTerms.length ? 'Other keywords mentioned — missing' : 'Keywords mentioned — missing'}</h4>
+      <div class="chips">${chipRow(genMissing,'missing','Nothing major missing!')}</div>
+    </div>`;
+
+  document.getElementById('resultSections').innerHTML = html;
   document.getElementById('result').scrollIntoView({behavior:'smooth', block:'nearest'});
 });
 </script>
